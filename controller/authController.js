@@ -1,109 +1,130 @@
-import User from "../models/User.js";
-import { generateToken } from "../utils/generateToken.js";
-
-function toSafeUser(user) {
-  return {
-    id: user._id,
-    name: user.name,
-    email: user.email,
-    phone: user.phone,
-    role: user.role,
-  };
-}
+import User from '../models/User.js'
+import generateToken from '../utils/generateToken.js'
 
 export const register = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password } = req.body
 
-    // Basic validation
     if (!name || !email || !password) {
       return res.status(400).json({
-        message: "Name, email and password are required",
-      });
+        message: 'Name, email and password are required.',
+      })
     }
 
-    // Strong password validation
-    const strongPassword =
-      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
-
-    if (!strongPassword.test(password)) {
+    if (password.length < 6) {
       return res.status(400).json({
-        message:
-          "Password must be at least 8 characters and contain uppercase, lowercase, number and special character",
-      });
+        message: 'Password must be at least 6 characters.',
+      })
     }
 
-    // Check existing user
-    const existingUser = await User.findOne({ email });
+    const normalizedEmail = email.trim().toLowerCase()
+
+    const existingUser = await User.findOne({
+      email: normalizedEmail,
+    })
 
     if (existingUser) {
       return res.status(409).json({
-        message: "An account with this email already exists",
-      });
+        message: 'An account with this email already exists.',
+      })
     }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 12);
 
     const user = await User.create({
-      name,
-      email,
-      password: hashedPassword,
-    });
+      name: name.trim(),
+      email: normalizedEmail,
+      password,
+    })
 
     return res.status(201).json({
-      message: "Account created successfully. Please login.",
-    });
+      message: 'Account created successfully.',
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    })
   } catch (error) {
-    console.error("Register error:", error);
+    console.error('REGISTER ERROR:', error)
 
     return res.status(500).json({
-      message: "Server error. Please try again later.",
-    });
-  }
-};
-
-// POST /api/auth/login
-export async function login(req, res, next) {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ message: "Email and password are required" });
-    }
-
-    // password has `select: false` on the schema, so we must explicitly
-    // ask for it here in order to compare it.
-    const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
-    if (!user) {
-      return res.status(401).json({ message: "Invalid email or password" });
-    }
-
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch) {
-      return res.status(401).json({ message: "Invalid email or password" });
-    }
-
-    const token = generateToken(user._id);
-
-    res.json({
-      token,
-      user: toSafeUser(user),
-    });
-  } catch (error) {
-    next(error);
+      message: 'Unable to create account.',
+    })
   }
 }
 
-// GET /api/auth/profile (protected)
-export async function getProfile(req, res, next) {
+export const login = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
+    const { email, password } = req.body
+
+    if (!email || !password) {
+      return res.status(400).json({
+        message: 'Email and password are required.',
+      })
     }
-    res.json({ user: toSafeUser(user) });
+
+    const user = await User.findOne({
+      email: email.trim().toLowerCase(),
+    }).select('+password')
+
+    if (!user) {
+      return res.status(401).json({
+        message: 'Invalid email or password.',
+      })
+    }
+
+    const isPasswordValid = await user.comparePassword(password)
+
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        message: 'Invalid email or password.',
+      })
+    }
+
+    const token = generateToken(user._id)
+
+    return res.status(200).json({
+      message: 'Login successful.',
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    })
   } catch (error) {
-    next(error);
+    console.error('LOGIN ERROR:', error)
+
+    return res.status(500).json({
+      message: 'Unable to login.',
+    })
+  }
+}
+
+export const getProfile = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id)
+
+    if (!user) {
+      return res.status(404).json({
+        message: 'User not found.',
+      })
+    }
+
+    return res.status(200).json({
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    })
+  } catch (error) {
+    console.error('PROFILE ERROR:', error)
+
+    return res.status(500).json({
+      message: 'Unable to fetch profile.',
+    })
   }
 }
