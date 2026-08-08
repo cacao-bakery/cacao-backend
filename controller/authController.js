@@ -11,44 +11,57 @@ function toSafeUser(user) {
   };
 }
 
-// POST /api/auth/register
-export async function register(req, res, next) {
+export const register = async (req, res) => {
   try {
-    const { name, email, phone, password } = req.body;
+    const { name, email, password } = req.body;
 
+    // Basic validation
     if (!name || !email || !password) {
-      return res.status(400).json({ message: "Name, email, and password are required" });
-    }
-    if (password.length < 6) {
-      return res.status(400).json({ message: "Password must be at least 6 characters" });
-    }
-
-    const existingEmail = await User.findOne({ email: email.toLowerCase() });
-    if (existingEmail) {
-      return res.status(409).json({ message: "An account with this email already exists" });
+      return res.status(400).json({
+        message: "Name, email and password are required",
+      });
     }
 
-    if (phone) {
-      const existingPhone = await User.findOne({ phone });
-      if (existingPhone) {
-        return res.status(409).json({ message: "An account with this phone number already exists" });
-      }
+    // Strong password validation
+    const strongPassword =
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
+
+    if (!strongPassword.test(password)) {
+      return res.status(400).json({
+        message:
+          "Password must be at least 8 characters and contain uppercase, lowercase, number and special character",
+      });
     }
 
-    // Password hashing happens automatically via the pre('save') hook on
-    // the User model — nothing to do here except create the document.
-    const user = await User.create({ name, email, phone, password });
+    // Check existing user
+    const existingUser = await User.findOne({ email });
 
-    const token = generateToken(user._id);
+    if (existingUser) {
+      return res.status(409).json({
+        message: "An account with this email already exists",
+      });
+    }
 
-    res.status(201).json({
-      token,
-      user: toSafeUser(user),
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 12);
+
+    const user = await User.create({
+      name,
+      email,
+      password: hashedPassword,
+    });
+
+    return res.status(201).json({
+      message: "Account created successfully. Please login.",
     });
   } catch (error) {
-    next(error);
+    console.error("Register error:", error);
+
+    return res.status(500).json({
+      message: "Server error. Please try again later.",
+    });
   }
-}
+};
 
 // POST /api/auth/login
 export async function login(req, res, next) {
