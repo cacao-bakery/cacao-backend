@@ -1,0 +1,343 @@
+import mongoose from 'mongoose'
+import Order from '../models/order.js'
+import Product from '../models/Product.js'
+
+/**
+ * Generate unique order number
+ *
+ * Example:
+ * CACAO-20260829-A7K92P
+ */
+const generateOrderNumber = () => {
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+  const random = Math.random().toString(36).substring(2, 8).toUpperCase()
+  return `CACAO-${date}-${random}`
+}
+
+/**
+ * CREATE ORDER
+ *
+ * POST /api/orders
+ *
+ * Wrapped in a MongoDB transaction so the stock check and the stock
+ * decrement happen atomically, per item. Previously these were two
+ * separate steps (read stock -> validate -> later decrement), which left
+ * a real race condition: two customers ordering the last unit at the same
+ * moment could both pass validation and both succeed, overselling.
+ * findOneAndUpdate with `stock: { $gte: quantity }` in the filter makes
+ * the check and the decrement a single atomic operation — if two requests
+ * race, only one can possibly succeed.
+ *
+ * Note: this requires MongoDB to be running as a replica set, which
+ * Atlas (including the free M0 tier) already is by default — no plan
+ * upgrade needed.
+ */
+export const createOrder = async (req, res) => {
+  const session = await mongoose.startSession()
+
+  try {
+    session.startTransaction()
+
+    const { customer, delivery, items, payment, notes } = req.body
+
+    // ============================================================
+    // CUSTOMER
+    // ============================================================
+
+    if (!customer) {
+      await session.abortTransaction()
+      return res.status(400).json({
+        success: false,
+        message: 'Customer details are required',
+      })
+    }
+
+    const name = customer.name?.trim()
+    const email = customer.email?.trim()
+    const phone = customer.phone?.trim()
+
+    if (!name) {
+      await session.abortTransaction()
+      return res.status(400).json({ success: false, message: 'Customer name is required' })
+    }
+
+    if (!email) {
+      await session.abortTransaction()
+      return res.status(400).json({ success: false, message: 'Customer email is required' })
+    }
+
+    if (!phone) {
+      await session.abortTransaction()
+      return res.status(400).json({ success: false, message: 'Customer phone is required' })
+    }
+
+    // ============================================================
+    // DELIVERY
+    // ============================================================
+
+    if (!delivery) {
+      await session.abortTransaction()
+      return res.status(400).json({ success: false, message: 'Delivery details are required' })
+    }
+
+    const deliveryMethod = delivery.method || 'delivery'
+
+    if (!['delivery', 'pickup'].includes(deliveryMethod)) {
+      await session.abortTransaction()
+      return res.status(400).json({ success: false, message: 'Invalid delivery method' })
+    }
+
+    if (deliveryMethod === 'delivery') {
+      if (!delivery.address?.trim()) {
+        await session.abortTransaction()
+        return res.status(400).json({ success: false, message: 'Delivery address is required' })
+      }
+
+      if (!delivery.city?.trim()) {
+        await session.abortTransaction()
+        return res.status(400).json({ success: false, message: 'City is required' })
+      }
+
+      if (!delivery.state?.trim()) {
+        await session.abortTransaction()
+        return res.status(400).json({ success: false, message: 'State is required' })
+      }
+
+      if (!/^\d{6}$/.test(delivery.pincode?.trim() || '')) {
+        await session.abortTransaction()
+        return res.status(400).json({ success: false, message: 'Valid 6-digit PIN code is required' })
+      }
+    }
+
+    // ============================================================
+    // ITEMS
+    // ============================================================
+
+    if (!Array.isArray(items) || items.length === 0) {
+      await session.abortTransaction()
+      return res.status(400).json({ success: false, message: 'Order must contain at least one item' })
+    }
+
+    // ============================================================
+    // PAYMENT
+    // ============================================================
+
+    const paymentMethod = payment?.method || 'upi'
+
+    if (!['upi', 'whatsapp'].includes(paymentMethod)) {
+      await session.abortTransaction()
+      return res.status(400).json({ success: false, message: 'Invalid payment method' })
+    }
+
+    const transactionId = payment?.transactionId?.trim() || ''
+    const paymentStatus = transactionId ? 'submitted' : 'pending'
+
+    // ============================================================
+    // VALIDATE ITEM IDS
+    // ============================================================
+
+    for (const item of items) {
+      if (!item.product) {
+        await session.abortTransaction()
+        return res.status(400).json({ success: false, message: 'Each order item must contain a product ID' })
+      }
+
+      if (!mongoose.Types.ObjectId.isValid(item.product)) {
+        await session.abortTransaction()
+        return res.status(400).json({ success: false, message: `Invalid product ID: ${item.product}` })
+      }
+
+      const quantity = Number(item.quantity)
+
+      if (!Number.isInteger(quantity) || quantity < 1) {
+        await session.abortTransaction()
+        return res.status(400).json({ success: false, message: 'Quantity must be a positive integer' })
+      }
+    }
+
+    // ============================================================
+    // FETCH PRODUCTS (inside the transaction, so reads are consistent
+    // with the atomic decrements below)
+    // ============================================================
+
+    const productIds = [...new Set(items.map((item) => item.product.toString()))]
+
+    const products = await Product.find({ _id: { $in: productIds } }).session(session)
+
+    if (products.length !== productIds.length) {
+      await session.abortTransaction()
+      return res.status(404).json({
+        success: false,
+        message: 'One or more products could not be found',
+      })
+    }
+
+    // ============================================================
+    // VALIDATE AVAILABILITY, THEN ATOMICALLY CHECK + DECREMENT STOCK
+    // ============================================================
+
+    const orderItems = []
+
+    for (const item of items) {
+      const product = products.find((p) => p._id.toString() === item.product.toString())
+      const quantity = Number(item.quantity)
+
+      // Manager-level override — always wins regardless of stock.
+      if (product.isAvailable !== true) {
+        await session.abortTransaction()
+        return res.status(400).json({
+          success: false,
+          code: 'PRODUCT_UNAVAILABLE',
+          message: `${product.name} is marked unavailable by the manager`,
+          product: {
+            id: product._id,
+            name: product.name,
+            isAvailable: product.isAvailable,
+            stock: product.stock,
+          },
+        })
+      }
+
+      // Atomic check-and-decrement: the filter (`stock: { $gte: quantity }`)
+      // and the update (`$inc: { stock: -quantity } `) happen as one
+      // operation. If stock has already dropped below what's needed —
+      // even due to a concurrent request that snuck in a moment ago —
+      // this simply returns null instead of decrementing into negative
+      // stock.
+      const updatedProduct = await Product.findOneAndUpdate(
+        { _id: product._id, stock: { $gte: quantity } },
+        { $inc: { stock: -quantity } },
+        { new: true, session },
+      )
+
+      if (!updatedProduct) {
+        await session.abortTransaction()
+        return res.status(400).json({
+          success: false,
+          code: 'INSUFFICIENT_STOCK',
+          message: `${product.name} has insufficient stock`,
+          product: {
+            id: product._id,
+            name: product.name,
+            isAvailable: product.isAvailable,
+            stock: product.stock,
+            requested: quantity,
+          },
+        })
+      }
+
+      orderItems.push({
+        product: product._id,
+        name: product.name,
+        price: Number(product.price),
+        quantity,
+        image: product.image || '',
+      })
+    }
+
+    // ============================================================
+    // TOTALS
+    // ============================================================
+
+    const subtotal = orderItems.reduce((sum, item) => sum + Number(item.price) * Number(item.quantity), 0)
+    const deliveryCharge = 0
+    const total = subtotal + deliveryCharge
+
+    // ============================================================
+    // CREATE ORDER (inside the same transaction as the stock decrements
+    // above, so if this fails, the stock changes are rolled back too)
+    // ============================================================
+
+    const [order] = await Order.create(
+      [
+        {
+          orderNumber: generateOrderNumber(),
+          customer: {
+            user: req.user?._id || null,
+            name,
+            email,
+            phone,
+          },
+          delivery: {
+            method: deliveryMethod,
+            address: delivery.address?.trim() || '',
+            city: delivery.city?.trim() || '',
+            state: delivery.state?.trim() || '',
+            pincode: delivery.pincode?.trim() || '',
+            preferredDate: delivery.preferredDate || '',
+            preferredTime: delivery.preferredTime || '',
+          },
+          notes: notes?.trim() || '',
+          items: orderItems,
+          subtotal,
+          deliveryCharge,
+          total,
+          payment: {
+            method: paymentMethod,
+            transactionId,
+            status: paymentStatus,
+          },
+          orderStatus: 'pending',
+        },
+      ],
+      { session },
+    )
+
+    await session.commitTransaction()
+
+    // ============================================================
+    // RESPONSE
+    // ============================================================
+
+    return res.status(201).json({
+      success: true,
+      message: 'Order created successfully',
+      order: {
+        id: order._id,
+        orderNumber: order.orderNumber,
+        customer: order.customer,
+        delivery: order.delivery,
+        notes: order.notes,
+        items: order.items,
+        subtotal: order.subtotal,
+        deliveryCharge: order.deliveryCharge,
+        total: order.total,
+        payment: order.payment,
+        orderStatus: order.orderStatus,
+        createdAt: order.createdAt,
+      },
+    })
+  } catch (error) {
+    await session.abortTransaction().catch(() => {})
+    console.error('Create order error:', error)
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to create order',
+    })
+  } finally {
+    session.endSession()
+  }
+}
+
+/**
+ * GET ORDER BY ORDER NUMBER
+ *
+ * GET /api/orders/:orderNumber
+ */
+export const getOrderByNumber = async (req, res) => {
+  try {
+    const { orderNumber } = req.params
+
+    const order = await Order.findOne({ orderNumber }).populate('items.product', 'name price image')
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' })
+    }
+
+    return res.status(200).json({ success: true, order })
+  } catch (error) {
+    console.error('Get order error:', error)
+    return res.status(500).json({ success: false, message: 'Failed to fetch order' })
+  }
+}
