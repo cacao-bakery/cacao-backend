@@ -45,6 +45,13 @@ const orderSchema = new mongoose.Schema(
       trim: true,
     },
 
+    invoiceNumber: {
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+    },
+
     customer: {
       user: {
         type: mongoose.Schema.Types.ObjectId,
