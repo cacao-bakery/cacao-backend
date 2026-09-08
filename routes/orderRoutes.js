@@ -3,6 +3,7 @@ import express from 'express'
 import {
   createOrder,
   getOrderByNumber,
+  getAllOrders
 } from '../controller/orderController.js'
 
 import {
@@ -32,6 +33,11 @@ router.get(
       message: 'Invoice routes are working',
     })
   },
+)
+
+router.get(
+  '/admin/all',
+  getAllOrders,
 )
 
 /*

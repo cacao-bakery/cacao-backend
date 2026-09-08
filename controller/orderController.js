@@ -618,3 +618,40 @@ export const getOrderByNumber = async (
     })
   }
 }
+
+/**
+ * ============================================================
+ * GET ALL ORDERS — ADMIN
+ * ============================================================
+ *
+ * GET /api/orders/admin/all
+ *
+ * Returns all orders for the admin panel.
+ */
+export const getAllOrders = async (req, res) => {
+  try {
+    const orders = await Order.find({})
+      .sort({ createdAt: -1 })
+      .populate(
+        'items.product',
+        'name price image',
+      )
+      .lean()
+
+    return res.status(200).json({
+      success: true,
+      count: orders.length,
+      orders,
+    })
+  } catch (error) {
+    console.error(
+      'Get all orders error:',
+      error,
+    )
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch orders',
+    })
+  }
+}
