@@ -655,3 +655,139 @@ export const getAllOrders = async (req, res) => {
     })
   }
 }
+
+/**
+ * ============================================================
+ * UPDATE ORDER STATUS — ADMIN
+ * ============================================================
+ *
+ * PATCH /api/orders/:orderNumber/status
+ *
+ * Example body:
+ * {
+ *   "status": "confirmed"
+ * }
+ *
+ * Allowed statuses:
+ * pending
+ * confirmed
+ * processing
+ * out_for_delivery
+ * delivered
+ * cancelled
+ */
+export const updateOrderStatus = async (
+  req,
+  res,
+) => {
+  try {
+    const {
+      orderNumber,
+    } = req.params
+
+    const {
+      status,
+    } = req.body
+
+    // ==========================================================
+    // VALIDATE ORDER NUMBER
+    // ==========================================================
+
+    if (!orderNumber?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message:
+          'Order number is required',
+      })
+    }
+
+    // ==========================================================
+    // VALIDATE STATUS
+    // ==========================================================
+
+    const allowedStatuses = [
+      'pending',
+      'confirmed',
+      'processing',
+      'out_for_delivery',
+      'delivered',
+      'cancelled',
+    ]
+
+    const newStatus =
+      String(status || '')
+        .trim()
+        .toLowerCase()
+
+    if (
+      !allowedStatuses.includes(
+        newStatus,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          'Invalid order status',
+        allowedStatuses,
+      })
+    }
+
+    // ==========================================================
+    // FIND ORDER
+    // ==========================================================
+
+    const order =
+      await Order.findOne({
+        orderNumber:
+          orderNumber.trim(),
+      })
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found',
+      })
+    }
+
+    // ==========================================================
+    // UPDATE STATUS
+    // ==========================================================
+
+    order.orderStatus =
+      newStatus
+
+    await order.save()
+
+    // ==========================================================
+    // RESPONSE
+    // ==========================================================
+
+    return res.status(200).json({
+      success: true,
+      message:
+        'Order status updated successfully',
+
+      order: {
+        orderNumber:
+          order.orderNumber,
+
+        orderStatus:
+          order.orderStatus,
+
+        updatedAt:
+          order.updatedAt,
+      },
+    })
+  } catch (error) {
+    console.error(
+      'Update order status error:',
+      error,
+    )
+
+    return res.status(500).json({
+      success: false,
+      message:
+        'Failed to update order status',
+    })
+  }
+}

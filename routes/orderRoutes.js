@@ -3,7 +3,8 @@ import express from 'express'
 import {
   createOrder,
   getOrderByNumber,
-  getAllOrders
+  getAllOrders,
+  updateOrderStatus,
 } from '../controller/orderController.js'
 
 import {
@@ -38,6 +39,19 @@ router.get(
 router.get(
   '/admin/all',
   getAllOrders,
+)
+
+/*
+|--------------------------------------------------------------------------
+| UPDATE ORDER STATUS — ADMIN
+|--------------------------------------------------------------------------
+| PATCH /api/orders/:orderNumber/status
+|--------------------------------------------------------------------------
+*/
+
+router.patch(
+  '/:orderNumber/status',
+  updateOrderStatus,
 )
 
 /*
