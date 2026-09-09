@@ -791,3 +791,158 @@ export const updateOrderStatus = async (
     })
   }
 }
+
+/**
+ * ============================================================
+ * UPDATE PAYMENT STATUS — ADMIN
+ * ============================================================
+ *
+ * PATCH /api/orders/:orderNumber/payment
+ *
+ * Example body:
+ * {
+ *   "status": "verified"
+ * }
+ *
+ * Allowed payment statuses:
+ * pending
+ * submitted
+ * verified
+ * failed
+ */
+export const updatePaymentStatus = async (
+  req,
+  res,
+) => {
+  try {
+    const {
+      orderNumber,
+    } = req.params
+
+    const {
+      status,
+    } = req.body
+
+    // ==========================================================
+    // VALIDATE ORDER NUMBER
+    // ==========================================================
+
+    if (!orderNumber?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message:
+          'Order number is required',
+      })
+    }
+
+    // ==========================================================
+    // VALIDATE PAYMENT STATUS
+    // ==========================================================
+
+    const allowedStatuses = [
+      'pending',
+      'submitted',
+      'verified',
+      'failed',
+    ]
+
+    const newStatus =
+      String(status || '')
+        .trim()
+        .toLowerCase()
+
+    if (
+      !allowedStatuses.includes(
+        newStatus,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          'Invalid payment status',
+        allowedStatuses,
+      })
+    }
+
+    // ==========================================================
+    // FIND ORDER
+    // ==========================================================
+
+    const order =
+      await Order.findOne({
+        orderNumber:
+          orderNumber.trim(),
+      })
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found',
+      })
+    }
+
+    // ==========================================================
+    // VERIFY PAYMENT METHOD
+    // ==========================================================
+
+    if (
+      order.payment?.method !== 'upi'
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          'Payment verification is only available for UPI orders',
+      })
+    }
+
+    // ==========================================================
+    // UPDATE PAYMENT STATUS
+    // ==========================================================
+
+    order.payment.status =
+      newStatus
+
+    await order.save()
+
+    // ==========================================================
+    // RESPONSE
+    // ==========================================================
+
+    return res.status(200).json({
+      success: true,
+
+      message:
+        'Payment status updated successfully',
+
+      order: {
+        orderNumber:
+          order.orderNumber,
+
+        payment: {
+          method:
+            order.payment.method,
+
+          transactionId:
+            order.payment.transactionId,
+
+          status:
+            order.payment.status,
+        },
+
+        updatedAt:
+          order.updatedAt,
+      },
+    })
+  } catch (error) {
+    console.error(
+      'Update payment status error:',
+      error,
+    )
+
+    return res.status(500).json({
+      success: false,
+      message:
+        'Failed to update payment status',
+    })
+  }
+}

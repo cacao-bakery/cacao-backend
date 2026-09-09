@@ -5,6 +5,7 @@ import {
   getOrderByNumber,
   getAllOrders,
   updateOrderStatus,
+  updatePaymentStatus,
 } from '../controller/orderController.js'
 
 import {
@@ -52,6 +53,11 @@ router.get(
 router.patch(
   '/:orderNumber/status',
   updateOrderStatus,
+)
+
+router.patch(
+  '/:orderNumber/payment',
+  updatePaymentStatus,
 )
 
 /*
