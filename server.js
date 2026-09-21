@@ -10,6 +10,7 @@ import authRoutes from "./routes/authRoutes.js";
 import productRoutes from "./routes/productRoutes.js";
 import categoryRoutes from "./routes/categoryRoutes.js";
 import orderRoutes from './routes/orderRoutes.js'
+import adminRoutes from './routes/adminRoutes.js'
 
 dotenv.config();
 
@@ -17,14 +18,26 @@ const app = express();
 
 const allowedOrigins = [
   "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:3000",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:5174",
+  "http://127.0.0.1:3000",
   "https://thecacaobakery.in",
   "https://www.thecacaobakery.in",
 ];
 
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true;
+  if (allowedOrigins.includes(origin)) return true;
+
+  return /^(https?:\/\/)(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+}
+
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (isAllowedOrigin(origin)) {
         callback(null, true);
       } else {
         callback(new Error("CORS not allowed"));
@@ -54,6 +67,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/categories", categoryRoutes);
 app.use('/api/orders',orderRoutes)
+app.use('/api/admin', adminRoutes)
 
 app.use((req, res) => {
   res.status(404).json({

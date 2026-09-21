@@ -7,6 +7,7 @@ export const protect = async (req, res, next) => {
 
     if (!authorization?.startsWith('Bearer ')) {
       return res.status(401).json({
+        success: false,
         message: 'Not authorized. Please login.',
       })
     }
@@ -22,6 +23,7 @@ export const protect = async (req, res, next) => {
 
     if (!user) {
       return res.status(401).json({
+        success: false,
         message: 'User no longer exists.',
       })
     }
@@ -33,7 +35,28 @@ export const protect = async (req, res, next) => {
     console.error('AUTH ERROR:', error.message)
 
     return res.status(401).json({
+      success: false,
       message: 'Invalid or expired token.',
     })
   }
+}
+
+export const requireAdminOrManager = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      message: 'Authentication required.',
+    })
+  }
+
+  const role = String(req.user.role || '').toLowerCase()
+
+  if (role !== 'admin' && role !== 'manager') {
+    return res.status(403).json({
+      success: false,
+      message: 'Access denied. Admin or manager privileges required.',
+    })
+  }
+
+  next()
 }

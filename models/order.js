@@ -193,12 +193,62 @@ const orderSchema = new mongoose.Schema(
         'cancelled',
       ],
       default: 'pending',
+      index: true,
     },
+    statusHistory: [
+      {
+        status: {
+          type: String,
+          enum: [
+            'pending',
+            'confirmed',
+            'processing',
+            'out_for_delivery',
+            'delivered',
+            'cancelled',
+          ],
+          required: true,
+        },
+        changedAt: {
+          type: Date,
+          default: Date.now,
+        },
+        changedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+          default: null,
+        },
+      },
+    ],
+    paymentHistory: [
+      {
+        status: {
+          type: String,
+          enum: ['pending', 'submitted', 'verified', 'failed'],
+          required: true,
+        },
+        changedAt: {
+          type: Date,
+          default: Date.now,
+        },
+        changedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+          default: null,
+        },
+      },
+    ],
   },
   {
     timestamps: true,
   },
 )
+
+orderSchema.index({ orderNumber: 1 })
+orderSchema.index({ invoiceNumber: 1 })
+orderSchema.index({ 'customer.email': 1 })
+orderSchema.index({ createdAt: -1 })
+orderSchema.index({ payment: { method: 1, status: 1 } })
 
 const Order = mongoose.model('Order', orderSchema)
 

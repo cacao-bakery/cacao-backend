@@ -19,6 +19,18 @@ const userSchema = new mongoose.Schema(
       trim: true,
     },
 
+    phone: {
+      type: String,
+      trim: true,
+      default: null,
+      sparse: true,
+      set: (value) => {
+        if (value === undefined || value === null) return null
+        const normalized = String(value).trim()
+        return normalized === '' ? null : normalized
+      },
+    },
+
     password: {
       type: String,
       required: true,

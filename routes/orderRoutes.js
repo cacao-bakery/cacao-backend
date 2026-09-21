@@ -11,6 +11,7 @@ import {
 import {
   getInvoice,
 } from '../controller/invoiceController.js'
+import { protect, requireAdminOrManager } from '../middleware/authMiddleware.js'
 
 const router = express.Router()
 
@@ -39,6 +40,8 @@ router.get(
 
 router.get(
   '/admin/all',
+  protect,
+  requireAdminOrManager,
   getAllOrders,
 )
 
@@ -52,11 +55,15 @@ router.get(
 
 router.patch(
   '/:orderNumber/status',
+  protect,
+  requireAdminOrManager,
   updateOrderStatus,
 )
 
 router.patch(
   '/:orderNumber/payment',
+  protect,
+  requireAdminOrManager,
   updatePaymentStatus,
 )
 

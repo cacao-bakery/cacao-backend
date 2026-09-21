@@ -486,6 +486,22 @@ export const createOrder = async (req, res) => {
             },
 
             orderStatus: 'pending',
+            statusHistory: [
+              {
+                status: 'pending',
+                changedAt: new Date(),
+                changedBy:
+                  req.user?._id || null,
+              },
+            ],
+            paymentHistory: [
+              {
+                status: paymentStatus,
+                changedAt: new Date(),
+                changedBy:
+                  req.user?._id || null,
+              },
+            ],
           },
         ],
         {
@@ -753,6 +769,17 @@ export const updateOrderStatus = async (
     // UPDATE STATUS
     // ==========================================================
 
+    const previousStatus = order.orderStatus
+
+    if (previousStatus !== newStatus) {
+      order.statusHistory = order.statusHistory || []
+      order.statusHistory.push({
+        status: newStatus,
+        changedAt: new Date(),
+        changedBy: req.user?._id || null,
+      })
+    }
+
     order.orderStatus =
       newStatus
 
@@ -899,8 +926,17 @@ export const updatePaymentStatus = async (
     // UPDATE PAYMENT STATUS
     // ==========================================================
 
+    const previousPaymentStatus = order.payment?.status || 'pending'
+
     order.payment.status =
       newStatus
+
+    order.paymentHistory = order.paymentHistory || []
+    order.paymentHistory.push({
+      status: newStatus,
+      changedAt: new Date(),
+      changedBy: req.user?._id || null,
+    })
 
     await order.save()
 
