@@ -373,8 +373,7 @@ export const updateAdminOrderStatus = async (req, res) => {
     if (previousStatus !== newStatus) {
       order.statusHistory = order.statusHistory || []
       order.statusHistory.push({
-        from: previousStatus,
-        to: newStatus,
+        status: newStatus,
         changedBy: req.user._id,
         changedAt: new Date(),
       })
@@ -431,8 +430,7 @@ export const updateAdminPaymentStatus = async (req, res) => {
 
       order.paymentHistory = order.paymentHistory || []
       order.paymentHistory.push({
-        from: previousStatus,
-        to: newStatus,
+        status: newStatus,
         changedAt: new Date(),
         changedBy: req.user._id,
       })
