@@ -1,6 +1,13 @@
 import mongoose from 'mongoose'
 import Order from '../models/order.js'
 import Product from '../models/Product.js'
+import CustomerNotification from '../models/CustomerNotification.js'
+import AdminAuditLog from '../models/AdminAuditLog.js'
+import {
+  notifyManagerOfNewOrder,
+  notifyManagerOfEvent,
+  notifyCustomerOfOrderStatus,
+} from '../utils/notifications.js'
 
 /**
  * ============================================================
@@ -515,6 +522,10 @@ export const createOrder = async (req, res) => {
 
     await session.commitTransaction()
 
+    await notifyManagerOfNewOrder(order).catch((error) => {
+      console.error('Manager notification creation failed:', error)
+    })
+
     // ==========================================================
     // RESPONSE
     // ==========================================================
@@ -785,6 +796,20 @@ export const updateOrderStatus = async (
 
     await order.save()
 
+    if (previousStatus !== newStatus) {
+      if (order.customer?.user) {
+        await CustomerNotification.create({
+          user: order.customer.user,
+          type: 'order_status',
+          title: 'Order status updated',
+          message: `Your order ${order.orderNumber} is now ${newStatus.replaceAll('_', ' ')}.`,
+          orderNumber: order.orderNumber,
+        })
+      }
+
+      void notifyCustomerOfOrderStatus(order, newStatus)
+    }
+
     // ==========================================================
     // RESPONSE
     // ==========================================================
@@ -928,17 +953,46 @@ export const updatePaymentStatus = async (
 
     const previousPaymentStatus = order.payment?.status || 'pending'
 
-    order.payment.status =
-      newStatus
+    order.payment.status = newStatus
 
-    order.paymentHistory = order.paymentHistory || []
-    order.paymentHistory.push({
-      status: newStatus,
-      changedAt: new Date(),
-      changedBy: req.user?._id || null,
-    })
+    if (previousPaymentStatus !== newStatus) {
+      order.paymentHistory = order.paymentHistory || []
+      order.paymentHistory.push({
+        status: newStatus,
+        changedAt: new Date(),
+        changedBy: req.user?._id || null,
+      })
+    }
 
     await order.save()
+
+    if (previousPaymentStatus !== newStatus) {
+      await AdminAuditLog.create({
+        adminUser: req.user._id,
+        action: 'payment verification',
+        resource: 'OrderPayment',
+        resourceId: order._id.toString(),
+        oldValue: { paymentStatus: previousPaymentStatus },
+        newValue: { paymentStatus: newStatus },
+      })
+
+      if (newStatus === 'verified' && order.customer?.user) {
+        await CustomerNotification.create({
+          user: order.customer.user,
+          type: 'payment_verified',
+          title: 'Payment verified',
+          message: `Your payment for order ${order.orderNumber} has been verified.`,
+          orderNumber: order.orderNumber,
+        })
+      }
+
+      void notifyManagerOfEvent({
+        type: newStatus === 'verified' ? 'payment_verified' : 'payment_submitted',
+        title: newStatus === 'verified' ? 'Payment verified' : 'Payment status updated',
+        message: `Payment for order ${order.orderNumber} is ${newStatus}.`,
+        orderNumber: order.orderNumber,
+      }).catch((error) => console.error('Payment notification failed:', error))
+    }
 
     // ==========================================================
     // RESPONSE
@@ -980,5 +1034,121 @@ export const updatePaymentStatus = async (
       message:
         'Failed to update payment status',
     })
+  }
+}
+
+export const getMyOrders = async (req, res) => {
+  try {
+    const page = Math.max(1, Number(req.query.page || 1))
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit || 20)))
+    const skip = (page - 1) * limit
+    const filter = { 'customer.user': req.user._id }
+
+    if (req.query.status) {
+      filter.orderStatus = String(req.query.status).trim().toLowerCase()
+    }
+
+    const [orders, total] = await Promise.all([
+      Order.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .select('orderNumber invoiceNumber items total payment orderStatus createdAt updatedAt')
+        .lean(),
+      Order.countDocuments(filter),
+    ])
+
+    return res.status(200).json({
+      success: true,
+      orders,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    })
+  } catch (error) {
+    console.error('Get customer orders error:', error)
+    return res.status(500).json({ success: false, message: 'Failed to fetch order history' })
+  }
+}
+
+export const getMyOrderByNumber = async (req, res) => {
+  try {
+    const order = await Order.findOne({
+      orderNumber: req.params.orderNumber,
+      'customer.user': req.user._id,
+    }).populate('items.product', 'name price image').lean()
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' })
+    }
+
+    return res.status(200).json({ success: true, order })
+  } catch (error) {
+    console.error('Get customer order detail error:', error)
+    return res.status(500).json({ success: false, message: 'Failed to fetch order details' })
+  }
+}
+
+export const getMyOrderStatus = async (req, res) => {
+  try {
+    const order = await Order.findOne({
+      orderNumber: req.params.orderNumber,
+      'customer.user': req.user._id,
+    }).select('orderNumber orderStatus statusHistory payment.status updatedAt').lean()
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' })
+    }
+
+    return res.status(200).json({
+      success: true,
+      status: {
+        orderNumber: order.orderNumber,
+        orderStatus: order.orderStatus,
+        paymentStatus: order.payment?.status || 'pending',
+        statusHistory: order.statusHistory || [],
+        updatedAt: order.updatedAt,
+      },
+    })
+  } catch (error) {
+    console.error('Get customer order status error:', error)
+    return res.status(500).json({ success: false, message: 'Failed to fetch order status' })
+  }
+}
+
+export const getMyNotifications = async (req, res) => {
+  try {
+    const notifications = await CustomerNotification.find({ user: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean()
+    const unreadCount = await CustomerNotification.countDocuments({ user: req.user._id, read: false })
+
+    return res.status(200).json({ success: true, notifications, unreadCount })
+  } catch (error) {
+    console.error('Get customer notifications error:', error)
+    return res.status(500).json({ success: false, message: 'Failed to fetch notifications' })
+  }
+}
+
+export const markMyNotificationRead = async (req, res) => {
+  try {
+    const notification = await CustomerNotification.findOneAndUpdate(
+      { _id: req.params.id, user: req.user._id },
+      { read: true },
+      { new: true },
+    ).lean()
+
+    if (!notification) {
+      return res.status(404).json({ success: false, message: 'Notification not found' })
+    }
+
+    return res.status(200).json({ success: true, notification })
+  } catch (error) {
+    console.error('Mark customer notification read error:', error)
+    return res.status(500).json({ success: false, message: 'Failed to update notification' })
   }
 }

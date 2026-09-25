@@ -28,6 +28,8 @@ import {
   getAdminReportsProducts,
   getAdminReportsCustomers,
   getAdminNotifications,
+  markAdminNotificationRead,
+  getAdminNotificationUnreadCount,
   getAdminAuditLogs,
   getAdminCategories,
   createAdminCategory,
@@ -75,6 +77,8 @@ router.get('/reports/products', getAdminReportsProducts)
 router.get('/reports/customers', getAdminReportsCustomers)
 
 router.get('/notifications', getAdminNotifications)
+router.get('/notifications/unread-count', getAdminNotificationUnreadCount)
+router.patch('/notifications/:id/read', markAdminNotificationRead)
 
 router.get('/audit-logs', getAdminAuditLogs)
 

@@ -4,6 +4,11 @@ import {
   createOrder,
   getOrderByNumber,
   getAllOrders,
+  getMyOrders,
+  getMyOrderByNumber,
+  getMyOrderStatus,
+  getMyNotifications,
+  markMyNotificationRead,
   updateOrderStatus,
   updatePaymentStatus,
 } from '../controller/orderController.js'
@@ -27,6 +32,12 @@ router.post(
   '/',
   createOrder,
 )
+
+router.get('/my', protect, getMyOrders)
+router.get('/my/notifications', protect, getMyNotifications)
+router.patch('/my/notifications/:id/read', protect, markMyNotificationRead)
+router.get('/my/:orderNumber/status', protect, getMyOrderStatus)
+router.get('/my/:orderNumber', protect, getMyOrderByNumber)
 
 router.get(
   '/invoice-test',

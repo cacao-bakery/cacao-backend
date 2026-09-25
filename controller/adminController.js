@@ -6,6 +6,12 @@ import Product from '../models/Product.js'
 import Category from '../models/categoryModel.js'
 import InventoryHistory from '../models/InventoryHistory.js'
 import AdminAuditLog from '../models/AdminAuditLog.js'
+import AdminNotification from '../models/AdminNotification.js'
+import CustomerNotification from '../models/CustomerNotification.js'
+import {
+  notifyManagerOfEvent,
+  notifyCustomerOfOrderStatus,
+} from '../utils/notifications.js'
 
 const LOW_STOCK_THRESHOLD = Number(process.env.LOW_STOCK_THRESHOLD || 5)
 
@@ -388,6 +394,25 @@ export const updateAdminOrderStatus = async (req, res) => {
         oldValue: { orderStatus: previousStatus },
         newValue: { orderStatus: newStatus },
       })
+
+      if (order.customer?.user) {
+        await CustomerNotification.create({
+          user: order.customer.user,
+          type: 'order_status',
+          title: 'Order status updated',
+          message: `Your order ${order.orderNumber} is now ${newStatus.replaceAll('_', ' ')}.`,
+          orderNumber: order.orderNumber,
+        })
+      }
+
+      void notifyCustomerOfOrderStatus(order, newStatus)
+
+      void notifyManagerOfEvent({
+        type: 'order_status',
+        title: 'Order status updated',
+        message: `Order ${order.orderNumber} is now ${newStatus}.`,
+        orderNumber: order.orderNumber,
+      }).catch((error) => console.error('Order status notification failed:', error))
     }
 
     return res.status(200).json({
@@ -445,6 +470,23 @@ export const updateAdminPaymentStatus = async (req, res) => {
         oldValue: { paymentStatus: previousStatus },
         newValue: { paymentStatus: newStatus },
       })
+
+      if (newStatus === 'verified' && order.customer?.user) {
+        await CustomerNotification.create({
+          user: order.customer.user,
+          type: 'payment_verified',
+          title: 'Payment verified',
+          message: `Your payment for order ${order.orderNumber} has been verified.`,
+          orderNumber: order.orderNumber,
+        })
+      }
+
+      void notifyManagerOfEvent({
+        type: newStatus === 'verified' ? 'payment_verified' : 'payment_submitted',
+        title: newStatus === 'verified' ? 'Payment verified' : 'Payment status updated',
+        message: `Payment for order ${order.orderNumber} is ${newStatus}.`,
+        orderNumber: order.orderNumber,
+      }).catch((error) => console.error('Payment notification failed:', error))
     }
 
     return res.status(200).json({
@@ -1240,39 +1282,53 @@ export const getAdminReportsCustomers = async (req, res) => {
 
 export const getAdminNotifications = async (req, res) => {
   try {
-    const [pendingPayments, lowStock, todayOrders] = await Promise.all([
-      Order.find({ 'payment.status': 'pending' }).sort({ createdAt: -1 }).limit(5).lean(),
-      Product.find({ stock: { $lte: LOW_STOCK_THRESHOLD } }).sort({ stock: 1 }).limit(5).lean(),
-      Order.find({
-        createdAt: {
-          $gte: getISTStartOfDay(new Date()),
-          $lt: new Date(getISTStartOfDay(new Date()).getTime() + 24 * 60 * 60 * 1000),
-        },
-      }).sort({ createdAt: -1 }).limit(5).lean(),
+    const page = Math.max(1, Number(req.query.page || 1))
+    const limit = Math.max(1, Math.min(100, Number(req.query.limit || 30)))
+    const skip = (page - 1) * limit
+    const [notifications, total, unreadCount] = await Promise.all([
+      AdminNotification.find({}).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      AdminNotification.countDocuments({}),
+      AdminNotification.countDocuments({ read: false }),
     ])
 
-    const notifications = [
-      ...pendingPayments.map((order) => ({
-        type: 'pending_payment',
-        message: `Pending payment for order ${order.orderNumber}`,
-        createdAt: order.createdAt,
-      })),
-      ...lowStock.map((product) => ({
-        type: 'low_stock',
-        message: `${product.name} is low on stock (${product.stock})`,
-        createdAt: product.updatedAt,
-      })),
-      ...todayOrders.map((order) => ({
-        type: 'new_order',
-        message: `New order ${order.orderNumber} received`,
-        createdAt: order.createdAt,
-      })),
-    ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-
-    return res.status(200).json({ success: true, notifications })
+    return res.status(200).json({
+      success: true,
+      notifications,
+      unreadCount,
+      pagination: buildPagination(page, limit, total),
+    })
   } catch (error) {
     console.error('Admin notifications error:', error)
     return res.status(500).json({ success: false, message: 'Failed to fetch notifications' })
+  }
+}
+
+export const markAdminNotificationRead = async (req, res) => {
+  try {
+    const notification = await AdminNotification.findByIdAndUpdate(
+      req.params.id,
+      { read: true },
+      { new: true },
+    ).lean()
+
+    if (!notification) {
+      return res.status(404).json({ success: false, message: 'Notification not found' })
+    }
+
+    return res.status(200).json({ success: true, notification })
+  } catch (error) {
+    console.error('Mark admin notification read error:', error)
+    return res.status(500).json({ success: false, message: 'Failed to update notification' })
+  }
+}
+
+export const getAdminNotificationUnreadCount = async (req, res) => {
+  try {
+    const unreadCount = await AdminNotification.countDocuments({ read: false })
+    return res.status(200).json({ success: true, unreadCount })
+  } catch (error) {
+    console.error('Admin notification count error:', error)
+    return res.status(500).json({ success: false, message: 'Failed to fetch notification count' })
   }
 }
 
