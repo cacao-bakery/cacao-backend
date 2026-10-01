@@ -1,6 +1,9 @@
 import jwt from 'jsonwebtoken'
 import User from '../models/User.js'
 
+const tokenPredatesPasswordChange = (decoded, user) =>
+  user.passwordChangedAt && Number(decoded.iat) < Math.floor(user.passwordChangedAt.getTime() / 1000)
+
 export const protect = async (req, res, next) => {
   try {
     const authorization = req.headers.authorization
@@ -19,7 +22,7 @@ export const protect = async (req, res, next) => {
       process.env.JWT_SECRET
     )
 
-    const user = await User.findById(decoded.id).select('-password')
+    const user = await User.findById(decoded.id).select('-password +passwordChangedAt')
 
     if (!user) {
       return res.status(401).json({
@@ -28,12 +31,53 @@ export const protect = async (req, res, next) => {
       })
     }
 
+    if (tokenPredatesPasswordChange(decoded, user)) {
+      return res.status(401).json({ success: false, message: 'Session expired. Please log in again.' })
+    }
+
     req.user = user
 
     next()
   } catch (error) {
     console.error('AUTH ERROR:', error.message)
 
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid or expired token.',
+    })
+  }
+}
+
+export const optionalProtect = async (req, res, next) => {
+  const authorization = req.headers.authorization
+
+  if (!authorization) return next()
+
+  try {
+    if (!authorization.startsWith('Bearer ')) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid authorization header.',
+      })
+    }
+
+    const decoded = jwt.verify(authorization.split(' ')[1], process.env.JWT_SECRET)
+    const user = await User.findById(decoded.id).select('-password +passwordChangedAt')
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'User no longer exists.',
+      })
+    }
+
+    if (tokenPredatesPasswordChange(decoded, user)) {
+      return res.status(401).json({ success: false, message: 'Session expired. Please log in again.' })
+    }
+
+    req.user = user
+    return next()
+  } catch {
     return res.status(401).json({
       success: false,
       message: 'Invalid or expired token.',

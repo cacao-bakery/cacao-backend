@@ -1,6 +1,18 @@
 import mongoose from 'mongoose'
 import bcrypt from 'bcryptjs'
 
+const addressSchema = new mongoose.Schema({
+  label: { type: String, required: true, trim: true, maxlength: 50 },
+  fullName: { type: String, required: true, trim: true, maxlength: 100 },
+  phone: { type: String, required: true, trim: true, maxlength: 30 },
+  street: { type: String, required: true, trim: true, maxlength: 300 },
+  city: { type: String, required: true, trim: true, maxlength: 100 },
+  state: { type: String, required: true, trim: true, maxlength: 100 },
+  pincode: { type: String, required: true, trim: true, maxlength: 20 },
+  country: { type: String, required: true, trim: true, default: 'India', maxlength: 100 },
+  isDefault: { type: Boolean, default: false },
+})
+
 const userSchema = new mongoose.Schema(
   {
     name: {
@@ -29,6 +41,41 @@ const userSchema = new mongoose.Schema(
         const normalized = String(value).trim()
         return normalized === '' ? null : normalized
       },
+    },
+
+    addresses: {
+      type: [addressSchema],
+      default: [],
+    },
+
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    emailVerificationTokenHash: {
+      type: String,
+      select: false,
+    },
+
+    emailVerificationExpiresAt: {
+      type: Date,
+      select: false,
+    },
+
+    passwordResetTokenHash: {
+      type: String,
+      select: false,
+    },
+
+    passwordResetExpiresAt: {
+      type: Date,
+      select: false,
+    },
+
+    passwordChangedAt: {
+      type: Date,
+      select: false,
     },
 
     password: {

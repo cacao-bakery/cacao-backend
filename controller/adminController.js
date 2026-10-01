@@ -608,40 +608,77 @@ export const getAdminProductById = async (req, res) => {
 
 export const createAdminProduct = async (req, res) => {
   try {
-    const { name, slug, description, price, category, dropNumber, image, ingredients, stock, isAvailable } = req.body
+    const { name, slug, description, price, category, dropNumber, image, ingredients, stock, isAvailable } = req.body || {}
+    const normalizedName = typeof name === 'string' ? name.trim() : ''
+    const normalizedDescription = typeof description === 'string' ? description.trim() : ''
 
-    if (!name || !description || price === undefined || !category || dropNumber === undefined) {
+    if (!normalizedName || !normalizedDescription || price === undefined || !category) {
       return res.status(400).json({ success: false, message: 'Missing required product fields' })
     }
 
-    if (Number(price) < 0) {
-      return res.status(400).json({ success: false, message: 'Price must be greater than or equal to 0' })
+    const normalizedPrice = Number(price)
+    if (!Number.isFinite(normalizedPrice) || normalizedPrice < 0) {
+      return res.status(400).json({ success: false, message: 'Price must be a valid number greater than or equal to 0' })
     }
 
-    if (Number(stock || 0) < 0) {
-      return res.status(400).json({ success: false, message: 'Stock must be greater than or equal to 0' })
+    const normalizedStock = stock === undefined || stock === '' ? 0 : Number(stock)
+    if (!Number.isFinite(normalizedStock) || normalizedStock < 0) {
+      return res.status(400).json({ success: false, message: 'Stock must be a valid number greater than or equal to 0' })
     }
 
-    if (!mongoose.Types.ObjectId.isValid(String(category))) {
-      return res.status(400).json({ success: false, message: 'Invalid category ID' })
+    const categoryValue = String(category).trim()
+    const normalizedCategorySlug = categoryValue
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+    const categoryDocument = mongoose.Types.ObjectId.isValid(categoryValue)
+      ? await Category.findById(categoryValue)
+      : await Category.findOne({
+          $or: [
+            { name: new RegExp(`^${categoryValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+            { slug: normalizedCategorySlug },
+          ],
+        })
+
+    if (!categoryDocument) {
+      return res.status(400).json({ success: false, message: 'Select an existing product category.' })
     }
 
-    const generatedSlug = slug || name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-')
+    const generatedSlug = (typeof slug === 'string' && slug.trim() ? slug : normalizedName)
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+    if (!generatedSlug) {
+      return res.status(400).json({ success: false, message: 'Product name must include letters or numbers.' })
+    }
+
     const productExists = await Product.findOne({ slug: generatedSlug })
     if (productExists) {
       return res.status(409).json({ success: false, message: 'A product with this slug already exists' })
     }
 
+    let normalizedDropNumber
+    if (dropNumber !== undefined && dropNumber !== '') {
+      normalizedDropNumber = Number(dropNumber)
+      if (!Number.isInteger(normalizedDropNumber) || normalizedDropNumber < 1) {
+        return res.status(400).json({ success: false, message: 'Drop number must be a positive whole number.' })
+      }
+    } else {
+      const lastProduct = await Product.findOne({}).sort({ dropNumber: -1 }).select('dropNumber').lean()
+      normalizedDropNumber = (lastProduct?.dropNumber || 0) + 1
+    }
+
     const product = await Product.create({
-      name,
+      name: normalizedName,
       slug: generatedSlug,
-      description,
-      price,
-      category,
-      dropNumber,
+      description: normalizedDescription,
+      price: normalizedPrice,
+      category: categoryDocument._id,
+      dropNumber: normalizedDropNumber,
       image: image || '',
       ingredients: ingredients || [],
-      stock: stock ?? 0,
+      stock: normalizedStock,
       isAvailable: isAvailable ?? true,
     })
 
@@ -657,6 +694,12 @@ export const createAdminProduct = async (req, res) => {
     return res.status(201).json({ success: true, message: 'Product created successfully', product })
   } catch (error) {
     console.error('Admin create product error:', error)
+    if (error.code === 11000) {
+      return res.status(409).json({ success: false, message: 'A product with this name or slug already exists' })
+    }
+    if (error.name === 'ValidationError' || error.name === 'CastError') {
+      return res.status(400).json({ success: false, message: 'Invalid product details' })
+    }
     return res.status(500).json({ success: false, message: 'Failed to create product' })
   }
 }
@@ -1371,8 +1414,37 @@ export const getAdminCategories = async (req, res) => {
 
 export const createAdminCategory = async (req, res) => {
   try {
-    const { name, slug, description, image, isActive } = req.body
-    const category = await Category.create({ name, slug, description, image, isActive })
+    const { name, slug, description, image, isActive } = req.body || {}
+    const normalizedName = typeof name === 'string' ? name.trim() : ''
+
+    if (!normalizedName) {
+      return res.status(400).json({ success: false, message: 'Category name is required.' })
+    }
+
+    const normalizedSlug = (typeof slug === 'string' ? slug.trim() : '') || normalizedName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+
+    if (!normalizedSlug) {
+      return res.status(400).json({ success: false, message: 'Category name must include letters or numbers.' })
+    }
+
+    const existingCategory = await Category.findOne({
+      $or: [{ name: normalizedName }, { slug: normalizedSlug.toLowerCase() }],
+    }).select('_id')
+
+    if (existingCategory) {
+      return res.status(409).json({ success: false, message: 'A category with this name or slug already exists.' })
+    }
+
+    const category = await Category.create({
+      name: normalizedName,
+      slug: normalizedSlug,
+      description,
+      image,
+      isActive,
+    })
     await createAuditLog({
       adminUser: req.user._id,
       action: 'category create',
@@ -1384,6 +1456,9 @@ export const createAdminCategory = async (req, res) => {
     return res.status(201).json({ success: true, message: 'Category created successfully', category })
   } catch (error) {
     console.error('Admin category create error:', error)
+    if (error.code === 11000) {
+      return res.status(409).json({ success: false, message: 'A category with this name or slug already exists.' })
+    }
     return res.status(500).json({ success: false, message: 'Failed to create category' })
   }
 }

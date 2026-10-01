@@ -1074,6 +1074,68 @@ export const getMyOrders = async (req, res) => {
   }
 }
 
+export const getCustomerOrderHistory = async (req, res) => {
+  try {
+    const requestedPage = Number(req.query.page || 1)
+    const requestedLimit = Number(req.query.limit || 20)
+    const page = Number.isFinite(requestedPage) ? Math.max(1, requestedPage) : 1
+    const limit = Number.isFinite(requestedLimit) ? Math.min(50, Math.max(1, requestedLimit)) : 20
+    const filter = { 'customer.user': req.user._id }
+
+    if (req.query.status) {
+      filter.orderStatus = String(req.query.status).trim().toLowerCase()
+    }
+
+    const [orders, total] = await Promise.all([
+      Order.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .select('orderNumber items delivery total payment.method payment.transactionId payment.status orderStatus createdAt')
+        .lean(),
+      Order.countDocuments(filter),
+    ])
+
+    return res.status(200).json({
+      success: true,
+      orders: orders.map((order) => ({
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        status: order.orderStatus,
+        placedAt: order.createdAt,
+        total: order.total,
+        items: order.items.map((item) => ({
+          productId: item.product,
+          name: item.name,
+          price: item.price,
+          quantity: item.quantity,
+          image: item.image,
+        })),
+        shippingAddress: {
+          method: order.delivery?.method || 'pickup',
+          address: order.delivery?.address || '',
+          city: order.delivery?.city || '',
+          state: order.delivery?.state || '',
+          pincode: order.delivery?.pincode || '',
+          preferredDate: order.delivery?.preferredDate || '',
+          preferredTime: order.delivery?.preferredTime || '',
+        },
+        paymentStatus: order.payment?.status || 'pending',
+        paymentReference: order.payment?.transactionId || '',
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    })
+  } catch (error) {
+    console.error('Get customer order history error:', error)
+    return res.status(500).json({ success: false, message: 'Failed to fetch order history' })
+  }
+}
+
 export const getMyOrderByNumber = async (req, res) => {
   try {
     const order = await Order.findOne({

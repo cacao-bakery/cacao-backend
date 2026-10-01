@@ -1,3 +1,4 @@
+import nodemailer from 'nodemailer'
 import AdminNotification from '../models/AdminNotification.js'
 
 const formatDelivery = (order) => {
@@ -19,32 +20,32 @@ const buildOrderMessage = (order) => [
   `Open admin panel: ${process.env.ADMIN_PANEL_URL || 'Configure ADMIN_PANEL_URL'}`,
 ].join('\n')
 
-const sendBrevoEmail = async ({ to, subject, message }) => {
-  if (!process.env.BREVO_API_KEY || !to || !process.env.BREVO_SENDER_EMAIL) {
+export const sendBrevoEmail = async ({ to, subject, message }) => {
+  if (!to || !process.env.BREVO_SMTP_USER || !process.env.BREVO_SMTP_PASS) {
     return
   }
 
-  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
-    method: 'POST',
-    headers: {
-      accept: 'application/json',
-      'api-key': process.env.BREVO_API_KEY,
-      'content-type': 'application/json',
+  const transporter = nodemailer.createTransport({
+    host: process.env.BREVO_SMTP_HOST || 'smtp-relay.brevo.com',
+    port: Number(process.env.BREVO_SMTP_PORT || 587),
+    secure: Number(process.env.BREVO_SMTP_PORT || 587) === 465,
+    auth: {
+      user: process.env.BREVO_SMTP_USER,
+      pass: process.env.BREVO_SMTP_PASS,
     },
-    body: JSON.stringify({
-      sender: {
-        email: process.env.BREVO_SENDER_EMAIL,
-        name: process.env.BREVO_SENDER_NAME || 'Cacao Bakery',
-      },
-      to: [{ email: to }],
-      subject,
-      textContent: message,
-    }),
   })
 
-  if (!response.ok) {
-    throw new Error(`Brevo returned ${response.status}`)
-  }
+  await transporter.sendMail({
+    from: {
+      address: process.env.BREVO_FROM_EMAIL || process.env.BREVO_SMTP_USER,
+      name: process.env.BREVO_FROM_NAME || 'Cacao Bakery',
+    },
+    to,
+    subject,
+    text: message,
+  })
+
+  return true
 }
 
 const sendTelegramMessage = async (message) => {

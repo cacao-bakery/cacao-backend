@@ -5,6 +5,7 @@ import {
   getOrderByNumber,
   getAllOrders,
   getMyOrders,
+  getCustomerOrderHistory,
   getMyOrderByNumber,
   getMyOrderStatus,
   getMyNotifications,
@@ -16,7 +17,7 @@ import {
 import {
   getInvoice,
 } from '../controller/invoiceController.js'
-import { protect, requireAdminOrManager } from '../middleware/authMiddleware.js'
+import { optionalProtect, protect, requireAdminOrManager } from '../middleware/authMiddleware.js'
 
 const router = express.Router()
 
@@ -30,9 +31,11 @@ const router = express.Router()
 
 router.post(
   '/',
+  optionalProtect,
   createOrder,
 )
 
+router.get('/me', protect, getCustomerOrderHistory)
 router.get('/my', protect, getMyOrders)
 router.get('/my/notifications', protect, getMyNotifications)
 router.patch('/my/notifications/:id/read', protect, markMyNotificationRead)
