@@ -21,8 +21,16 @@ const buildOrderMessage = (order) => [
 ].join('\n')
 
 export const sendBrevoEmail = async ({ to, subject, message }) => {
-  if (!to || !process.env.BREVO_SMTP_USER || !process.env.BREVO_SMTP_PASS) {
+  if (!to) {
     return
+  }
+
+  const missingCredentials = ['BREVO_SMTP_USER', 'BREVO_SMTP_PASS']
+    .filter((name) => !process.env[name])
+
+  if (missingCredentials.length) {
+    console.error(`Brevo email delivery skipped: missing ${missingCredentials.join(', ')} environment variable(s).`)
+    return false
   }
 
   const transporter = nodemailer.createTransport({
