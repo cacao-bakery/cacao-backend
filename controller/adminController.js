@@ -11,6 +11,7 @@ import CustomerNotification from '../models/CustomerNotification.js'
 import {
   notifyManagerOfEvent,
   notifyCustomerOfOrderStatus,
+  notifyCustomerOfPaymentVerified,
 } from '../utils/notifications.js'
 
 const LOW_STOCK_THRESHOLD = Number(process.env.LOW_STOCK_THRESHOLD || 5)
@@ -479,6 +480,10 @@ export const updateAdminPaymentStatus = async (req, res) => {
           message: `Your payment for order ${order.orderNumber} has been verified.`,
           orderNumber: order.orderNumber,
         })
+      }
+
+      if (newStatus === 'verified') {
+        void notifyCustomerOfPaymentVerified(order)
       }
 
       void notifyManagerOfEvent({

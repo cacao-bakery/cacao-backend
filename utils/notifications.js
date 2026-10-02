@@ -113,6 +113,55 @@ export const notifyManagerOfNewOrder = async (order) => {
   return notification
 }
 
+export const notifyCustomerOfNewOrder = async (order) => {
+  if (!order.customer?.email) return
+
+  const items = (order.items || [])
+    .map((item) => `${item.quantity} x ${item.name} - Rs ${item.price}`)
+    .join('\n')
+  const message = [
+    `Hi ${order.customer.name},`,
+    'Thank you for your order. We have received it and will keep you updated.',
+    `Order: ${order.orderNumber}`,
+    `Items:\n${items}`,
+    `Total: Rs ${order.total}`,
+    `Payment status: ${order.payment?.status || 'pending'}`,
+    `Delivery: ${formatDelivery(order)}`,
+  ].join('\n\n')
+
+  try {
+    await sendBrevoEmail({
+      to: order.customer.email,
+      subject: `Order ${order.orderNumber} received`,
+      message,
+    })
+  } catch (error) {
+    console.error('Customer order confirmation email failed:', error)
+  }
+}
+
+export const notifyCustomerOfPaymentVerified = async (order) => {
+  if (!order.customer?.email) return
+
+  const message = [
+    `Hi ${order.customer.name},`,
+    `Your payment for order ${order.orderNumber} has been verified.`,
+    `Amount: Rs ${order.total}`,
+    `Order status: ${order.orderStatus.replaceAll('_', ' ')}.`,
+    'We will email you again when your order status changes.',
+  ].join('\n\n')
+
+  try {
+    await sendBrevoEmail({
+      to: order.customer.email,
+      subject: `Payment verified for order ${order.orderNumber}`,
+      message,
+    })
+  } catch (error) {
+    console.error('Customer payment verification email failed:', error)
+  }
+}
+
 export const notifyCustomerOfOrderStatus = async (order, status) => {
   if (!order.customer?.email) return
 

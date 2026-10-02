@@ -6,7 +6,9 @@ import AdminAuditLog from '../models/AdminAuditLog.js'
 import {
   notifyManagerOfNewOrder,
   notifyManagerOfEvent,
+  notifyCustomerOfNewOrder,
   notifyCustomerOfOrderStatus,
+  notifyCustomerOfPaymentVerified,
 } from '../utils/notifications.js'
 
 /**
@@ -526,6 +528,10 @@ export const createOrder = async (req, res) => {
       console.error('Manager notification creation failed:', error)
     })
 
+    void notifyCustomerOfNewOrder(order).catch((error) => {
+      console.error('Customer order confirmation failed:', error)
+    })
+
     // ==========================================================
     // RESPONSE
     // ==========================================================
@@ -984,6 +990,10 @@ export const updatePaymentStatus = async (
           message: `Your payment for order ${order.orderNumber} has been verified.`,
           orderNumber: order.orderNumber,
         })
+      }
+
+      if (newStatus === 'verified') {
+        void notifyCustomerOfPaymentVerified(order)
       }
 
       void notifyManagerOfEvent({
