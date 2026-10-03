@@ -22,21 +22,51 @@ const buildOrderMessage = (order) => [
 
 export const sendBrevoEmail = async ({ to, subject, message }) => {
   if (!to) {
-    return
+    throw new Error('Brevo email delivery requires a recipient.')
   }
 
-  const missingCredentials = ['BREVO_SMTP_USER', 'BREVO_SMTP_PASS']
-    .filter((name) => !process.env[name])
+  const smtpPort = Number(process.env.BREVO_SMTP_PORT || 587)
+  const smtpCredentialsAvailable = process.env.BREVO_SMTP_USER && process.env.BREVO_SMTP_PASS
+  const fromEmail = process.env.BREVO_FROM_EMAIL || process.env.BREVO_SMTP_USER
+  const fromName = process.env.BREVO_FROM_NAME || 'Cacao Bakery'
 
-  if (missingCredentials.length) {
-    console.error(`Brevo email delivery skipped: missing ${missingCredentials.join(', ')} environment variable(s).`)
-    return false
+  if (!fromEmail) {
+    throw new Error('Brevo email delivery requires BREVO_FROM_EMAIL.')
+  }
+
+  if (process.env.BREVO_API_KEY) {
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'api-key': process.env.BREVO_API_KEY,
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      body: JSON.stringify({
+        sender: { email: fromEmail, name: fromName },
+        to: [{ email: to }],
+        subject,
+        textContent: message,
+      }),
+    })
+
+    if (!response.ok) {
+      throw new Error(`Brevo API email delivery failed with status ${response.status}.`)
+    }
+
+    return true
+  }
+
+  if (!smtpCredentialsAvailable) {
+    throw new Error(
+      'Brevo email delivery requires BREVO_API_KEY or both BREVO_SMTP_USER and BREVO_SMTP_PASS.',
+    )
   }
 
   const transporter = nodemailer.createTransport({
     host: process.env.BREVO_SMTP_HOST || 'smtp-relay.brevo.com',
-    port: Number(process.env.BREVO_SMTP_PORT || 587),
-    secure: Number(process.env.BREVO_SMTP_PORT || 587) === 465,
+    port: smtpPort,
+    secure: smtpPort === 465,
     auth: {
       user: process.env.BREVO_SMTP_USER,
       pass: process.env.BREVO_SMTP_PASS,
@@ -45,8 +75,8 @@ export const sendBrevoEmail = async ({ to, subject, message }) => {
 
   await transporter.sendMail({
     from: {
-      address: process.env.BREVO_FROM_EMAIL || process.env.BREVO_SMTP_USER,
-      name: process.env.BREVO_FROM_NAME || 'Cacao Bakery',
+      address: fromEmail,
+      name: fromName,
     },
     to,
     subject,
@@ -105,24 +135,39 @@ export const notifyManagerOfNewOrder = async (order) => {
     orderNumber: order.orderNumber,
   })
 
-  void Promise.allSettled([
+  const deliveries = await Promise.allSettled([
     sendBrevoEmail({
       to: process.env.MANAGER_EMAIL,
       subject: `New order ${order.orderNumber} requires payment verification`,
       message,
     }),
     sendTelegramMessage(message),
-  ]).then((deliveries) => {
-    deliveries
-      .filter((result) => result.status === 'rejected')
-      .forEach((result) => console.error('Manager notification delivery failed:', result.reason))
-  })
+  ])
+
+  deliveries
+    .filter((result) => result.status === 'rejected')
+    .forEach((result) => console.error('Manager notification delivery failed:', result.reason))
 
   return notification
 }
 
 export const notifyCustomerOfNewOrder = async (order) => {
-  if (!order.customer?.email) return
+  const recipient = order.customer?.email
+  const recipientDomain =
+    typeof recipient === 'string'
+      ? recipient.trim().match(/^[^@\s]+@([^@\s]+)$/)?.[1]?.toLowerCase() || 'unknown'
+      : 'unknown'
+  const logContext = {
+    orderNumber: order.orderNumber,
+    recipientDomain,
+  }
+
+  console.info('Customer order confirmation email started', logContext)
+
+  if (!recipient) {
+    console.warn('Customer order confirmation email skipped: recipient missing', logContext)
+    return
+  }
 
   const items = (order.items || [])
     .map((item) => `${item.quantity} x ${item.name} - Rs ${item.price}`)
@@ -139,12 +184,29 @@ export const notifyCustomerOfNewOrder = async (order) => {
 
   try {
     await sendBrevoEmail({
-      to: order.customer.email,
+      to: recipient,
       subject: `Order ${order.orderNumber} received`,
       message,
     })
+    console.info('Customer order confirmation email accepted by provider', logContext)
   } catch (error) {
-    console.error('Customer order confirmation email failed:', error)
+    const errorMessage = error instanceof Error ? error.message : 'Unknown email delivery error'
+    const sensitiveValues = [
+      recipient,
+      process.env.BREVO_API_KEY,
+      process.env.BREVO_SMTP_USER,
+      process.env.BREVO_SMTP_PASS,
+      process.env.BREVO_FROM_EMAIL,
+    ].filter(Boolean)
+    const safeErrorMessage = sensitiveValues.reduce(
+      (message, sensitiveValue) => message.replaceAll(sensitiveValue, '[redacted]'),
+      errorMessage,
+    )
+
+    console.error('Customer order confirmation email failed', {
+      ...logContext,
+      error: safeErrorMessage,
+    })
   }
 }
 

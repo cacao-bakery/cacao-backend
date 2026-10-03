@@ -528,7 +528,7 @@ export const createOrder = async (req, res) => {
       console.error('Manager notification creation failed:', error)
     })
 
-    void notifyCustomerOfNewOrder(order).catch((error) => {
+    await notifyCustomerOfNewOrder(order).catch((error) => {
       console.error('Customer order confirmation failed:', error)
     })
 
